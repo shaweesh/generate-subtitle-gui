@@ -1,9 +1,13 @@
+import os
+import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, scrolledtext
-import subprocess
-import os
 import threading
-import json
+from main import SubtitleGenerator
+from merge_srt import SRTMerger
+
+# Allow multiple OpenMP runtimes (temporary workaround)
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # List of Whisper supported languages
 SUPPORTED_LANGUAGES = [
@@ -12,6 +16,15 @@ SUPPORTED_LANGUAGES = [
     'mk', 'ml', 'mn', 'mr', 'ms', 'mt', 'nl', 'pl', 'pt', 'ro', 'ru', 'si', 'sk',
     'sl', 'sq', 'sr', 'su', 'sv', 'sw', 'ta', 'te', 'th', 'tr', 'uk', 'ur', 'vi',
     'xh', 'yi', 'zu'
+]
+
+# List of Whisper models
+WHISPER_MODELS = [
+    'tiny',
+    'base',
+    'small',
+    'medium',
+    'large'
 ]
 
 CONFIG_FILE = 'config.json'
@@ -25,11 +38,12 @@ def load_config():
 
 def save_config(config):
     with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f)
+        json.dump(config, f, indent=4)
 
 def browse_file():
     filename = filedialog.askopenfilename(
-        filetypes=[("Video files", "*.mp4;*.mkv;*.avi;*.mov;*.flv")]
+        filetypes=[("Video files", "*.mp4;*.mkv;*.avi;*.mov;*.flv"),
+                   ("Audio files", "*.mp3;*.wav")]
     )
     if filename:
         input_file.set(filename)
@@ -53,16 +67,36 @@ def prepare_srt():
 
 def run_prepare_srt():
     try:
-        subprocess.run([
-            "python", "main.py",
-            "--input", input_file.get(),
-            "--output", "prepared.srt",
-            "--language", language_menu.get(),  # Get language from dropdown
-            "--min_display_duration", "1.0"
-        ], check=True)
+        config = load_config()
+        model_name = config.get('model', 'large')  # Default to 'large' model if not set
+
+        # Validate model name
+        if model_name not in WHISPER_MODELS:
+            raise ValueError(f"Invalid model size '{model_name}', expected one of: {', '.join(WHISPER_MODELS)}")
+
+        generator = SubtitleGenerator(model=model_name)
+
+        file_extension = os.path.splitext(input_file.get())[1].lower()
+        if file_extension in ['.mp4', '.mkv', '.avi', '.mov', '.flv']:
+            generator.process_video(
+                input_video=input_file.get(),
+                output_srt="prepared.srt",
+                language=language_menu.get(),
+                min_display_duration=1.0
+            )
+        elif file_extension in ['.mp3', '.wav']:
+            generator.process_audio(
+                input_audio=input_file.get(),
+                output_srt="prepared.srt",
+                language=language_menu.get(),
+                min_display_duration=1.0
+            )
+        else:
+            raise ValueError("Unsupported file format.")
+
         root.after(0, lambda: show_message("Success", "SRT file prepared. You can now edit 'prepared.srt'."))
-    except subprocess.CalledProcessError:
-        root.after(0, lambda: show_message("Error", "Failed to prepare SRT file."))
+    except Exception as e:
+        root.after(0, lambda: show_message("Error", f"Failed to prepare SRT file: {str(e)}"))
     finally:
         root.after(0, reset_status)
 
@@ -99,7 +133,7 @@ def complete_srt():
     # Disable all buttons except the Cancel button
     set_buttons_state("disabled")
 
-    status_var.set("Completing video...")
+    status_var.set("Merging SRT with video...")
     progress.start()
     root.update_idletasks()
 
@@ -109,15 +143,13 @@ def complete_srt():
 
 def run_complete_srt(output_file):
     try:
-        subprocess.run([
-            "python", "merge_srt.py",
-            "--video", input_file.get(),
-            "--srt", "prepared.srt",
-            "--output", output_file
-        ], check=True)
-        root.after(0, lambda: show_message("Success", f"Video with subtitles saved as {output_file}."))
-    except subprocess.CalledProcessError:
-        root.after(0, lambda: show_message("Error", "Failed to complete the SRT file."))
+        video_file = input_file.get()
+        srt_file = "prepared.srt"
+        merger = SRTMerger()
+        merger.merge_srt_with_mp4(video_file, srt_file, output_file)
+        root.after(0, lambda: show_message("Success", f"Successfully merged SRT with video into {output_file}"))
+    except Exception as e:
+        root.after(0, lambda: show_message("Error", f"Failed to merge SRT with video: {str(e)}"))
     finally:
         root.after(0, reset_status)
 
@@ -127,27 +159,33 @@ def show_message(title, message):
 def reset_status():
     status_var.set("Ready")
     progress.stop()
-    root.update_idletasks()
-    set_buttons_state("normal")  # Re-enable buttons
+    set_buttons_state("normal")
 
 def set_buttons_state(state):
-    # Update the state of all buttons except the Cancel button
-    for widget in root.winfo_children():
-        if isinstance(widget, tk.Button) and widget.cget("text") not in ["Cancel"]:
-            widget.config(state=state)
+    for widget in [prepare_button, edit_button, complete_button]:
+        widget.config(state=state)
 
 def update_languages():
     language_menu['values'] = SUPPORTED_LANGUAGES
-    if SUPPORTED_LANGUAGES:
-        config = load_config()
-        saved_language = config.get('language', SUPPORTED_LANGUAGES[0])
-        language_menu.set(saved_language)
+    config = load_config()
+    # Set the default language based on the config or to 'en'
+    language_menu.set(config.get('language', 'en'))
 
-    language_menu.bind('<<ComboboxSelected>>', lambda e: save_config({'language': language_menu.get()}))
+def update_models():
+    model_menu['values'] = WHISPER_MODELS
+    config = load_config()
+    model_menu.set(config.get('model', 'large'))
 
-# Create the main window
+def save_config_on_change(*args):
+    config = {
+        'model': model_menu.get(),
+        'language': language_menu.get()
+    }
+    save_config(config)
+
+# Create and configure the main window
 root = tk.Tk()
-root.title("Subtitle Generator")
+root.title("Subtitle Preparation App")
 
 input_file = tk.StringVar()
 status_var = tk.StringVar(value="Ready")
@@ -157,19 +195,31 @@ tk.Label(root, text="Input File:").grid(row=0, column=0, padx=10, pady=10)
 tk.Entry(root, textvariable=input_file, width=50).grid(row=0, column=1, padx=10, pady=10)
 tk.Button(root, text="Browse", command=browse_file).grid(row=0, column=2, padx=10, pady=10)
 
-tk.Button(root, text="Prepare", command=prepare_srt).grid(row=1, column=0, padx=10, pady=10)
-tk.Button(root, text="Edit SRT", command=open_srt_editor).grid(row=1, column=1, padx=10, pady=10)
-tk.Button(root, text="Complete", command=complete_srt).grid(row=1, column=2, padx=10, pady=10)
+prepare_button = tk.Button(root, text="Prepare", command=prepare_srt)
+prepare_button.grid(row=1, column=0, padx=10, pady=10)
+edit_button = tk.Button(root, text="Edit SRT", command=open_srt_editor)
+edit_button.grid(row=1, column=1, padx=10, pady=10)
+complete_button = tk.Button(root, text="Complete", command=complete_srt)
+complete_button.grid(row=1, column=2, padx=10, pady=10)
 
 tk.Label(root, text="Select Language:").grid(row=2, column=0, padx=10, pady=10)
 language_menu = ttk.Combobox(root, state="readonly")
 language_menu.grid(row=2, column=1, padx=10, pady=10)
 
+tk.Label(root, text="Select Model:").grid(row=3, column=0, padx=10, pady=10)
+model_menu = ttk.Combobox(root, state="readonly")
+model_menu.grid(row=3, column=1, padx=10, pady=10)
+
 update_languages()
+update_models()
+
+# Bind changes in the Comboboxes to save configuration
+model_menu.bind("<<ComboboxSelected>>", save_config_on_change)
+language_menu.bind("<<ComboboxSelected>>", save_config_on_change)
 
 # Status label and progress bar
-tk.Label(root, textvariable=status_var).grid(row=3, column=0, columnspan=3, padx=10, pady=10)
-progress = ttk.Progressbar(root, mode='indeterminate')
-progress.grid(row=4, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
+tk.Label(root, textvariable=status_var).grid(row=5, column=0, columnspan=3, padx=10, pady=10)
+progress = ttk.Progressbar(root, orient=tk.HORIZONTAL, length=300, mode='indeterminate')
+progress.grid(row=6, column=0, columnspan=3, padx=10, pady=10)
 
 root.mainloop()

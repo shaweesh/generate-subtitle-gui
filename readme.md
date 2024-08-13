@@ -4,6 +4,8 @@
 
 `Generate Subtitle GUI` is an application that extracts audio from video files, generates subtitles using the Whisper model, and allows you to merge these subtitles back into the video. It features a graphical user interface for easy interaction and editing of subtitle files before finalizing.
 
+![Project Overview](assets/project-overview.png)
+
 ## Features
 
 - **Extract Audio**: Extracts audio from video files.
@@ -82,68 +84,15 @@ To create a standalone executable from the application:
    pip install pyinstaller
    ```
 
-2. **Create or Update `app.spec` File**
-
-   Ensure you have an `app.spec` file in your project directory with the following content:
-
-   ```python
-   # app.spec
-   # -*- mode: python ; coding: utf-8 -*-
-   block_cipher = None
-
-   a = Analysis(
-       ['app.py'],  # Main entry point of your application
-       pathex=['.'],  # Path where your application files are located
-       binaries=[],
-       datas=[
-           ('config.json', '.'),       # Include configuration file
-           ('icon.ico', '.'),          # Include icon file
-           ('main.py', '.'),           # Include main.py
-           ('merge_srt.py', '.'),      # Include merge_srt.py
-           # Add other files if needed
-       ],
-       hiddenimports=[],
-       hookspath=[],
-       hooksconfig={},
-       runtime_hooks=[],
-       excludes=[],
-       cipher=block_cipher,
-       noarchive=False,
-   )
-   pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-   exe = EXE(
-       pyz,
-       a.scripts,
-       [],
-       exclude_binaries=True,
-       name='generate-subtitle-gui',
-       debug=False,
-       bootloader_ignore_signals=False,
-       strip=False,
-       upx=True,
-       console=False,
-       version='1.0.0',
-       icon='icon.ico',  # Specify an icon file if you have one
-   )
-   ```
-
-3. **Build the Executable**
-
-   Run PyInstaller with the spec file to build the executable:
+2. **Build the Executable**
 
    ```bash
-   pyinstaller app.spec
-   ```
-
-   Alternatively, you can use the `--onefile` option directly if you haven't customized the spec file:
-
-   ```bash
-   pyinstaller --onefile --windowed app.py
+    pyinstaller --onefile --windowed --add-data "main.py;." --add-data "merge_srt.py;." app.py
    ```
 
    This will create a single executable file in the `dist` directory.
 
-4. **Verify the Executable**
+3. **Verify the Executable**
 
    Test the executable located in the `dist` directory to ensure it functions as expected and includes all necessary files and dependencies.
 
